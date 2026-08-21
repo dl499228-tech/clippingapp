@@ -1,0 +1,73 @@
+{
+  "theme": "Dark Mode Only - Pro Editing Studio (DaVinci Resolve / Premiere Pro aesthetic)",
+  "typography": {
+    "fonts": {
+      "headings": "IBM Plex Sans",
+      "body": "IBM Plex Sans",
+      "monospace": "JetBrains Mono"
+    },
+    "scale": {
+      "h1": "text-2xl sm:text-3xl tracking-tight font-semibold",
+      "h2": "text-xl sm:text-2xl tracking-tight font-medium",
+      "h3": "text-lg sm:text-xl font-medium",
+      "body": "text-sm leading-relaxed",
+      "small_labels": "text-xs tracking-[0.1em] uppercase font-bold text-neutral-400",
+      "timecodes": "font-mono text-xs text-blue-400 tracking-tight"
+    },
+    "rules": "Never use Inter for headings. Hierarchy ceiling is text-3xl for this desktop dashboard to preserve data density. Use monospace extensively for metrics, timestamps, and log outputs."
+  },
+  "colors": {
+    "archetype": "The Performance Pro / Technical Dashboard",
+    "palette": {
+      "background": "#0F0F11",
+      "surface_base": "#18181A",
+      "surface_elevated": "#222224",
+      "border": "#2E2E32",
+      "text_primary": "#ECECEC",
+      "text_secondary": "#9CA3AF",
+      "accent_primary": "#2D8CFF",
+      "accent_hover": "#1A73E8",
+      "accent_active": "#60A5FA",
+      "timeline_amber": "#F59E0B",
+      "status_success": "#10B981",
+      "status_error": "#EF4444"
+    },
+    "rules": "Strict adherence to Tinted Grey rule. Avoid pure #000000. Accent colors should be highly vibrant to pop against dark panels (Tactical Minimalism). Do not use broad gradients. No teal green."
+  },
+  "spacing_and_layout": {
+    "strategy": "Mode B: High Density Grid (Dashboards / Analytics)",
+    "containers": "All containers must have internal padding of p-4 to p-6. Panels must use surface_base or surface_elevated with 1px borders.",
+    "structure": "IDE Layout Strategy: Left Sidebar for Metadata/Settings, Top Center for Video Player & Transport Controls, Bottom Center for Timeline/Transcript, Right Sidebar for Clip Results & Scoring Breakdown.",
+    "borders": "Pro editing tools demand sharp edges: rounded-none or rounded-sm (max 4px). Avoid playful bubble radius."
+  },
+  "visual_enhancers": {
+    "surface": "Grid Borders (The Technical Look). Exposed skeletons. Data dense tables.",
+    "active_states": "Replace soft shadows with 1px solid stroke (accent_primary) + 2px inner glow for active elements.",
+    "overlays": "CRITICAL: No transparent backgrounds for dropdowns/modals. Use solid surface_elevated with a distinct border.",
+    "score_meters": "For the 8 sub-metrics (Hook, Payoff, etc.): Use tiny horizontal progress bars (h-1.5) paired with monospace numbers. Green/Amber/Red based on 0-100 scale."
+  },
+  "component_guidelines": {
+    "dropzone": "Minimalist bordered rectangle (border-dashed, border-neutral-600). Change to solid accent_primary on drag. Clear monospace upload progress.",
+    "processing_timeline": "Vertical terminal-like log or stepper. Monospace text. Blinking cursor for active step. Colors: Amber (Processing), Green (Done).",
+    "transcript_viewer": "List format. Colored pills for Speaker 1, Speaker 2. Clickable timestamps (JetBrains Mono). Hover states highlight the paragraph.",
+    "candidate_cards": "Extremely data-dense. Flex rows. Title, Timecode (Start-End), Score. Expandable to show the 8 sub-metric bars and 'Why selected'. Icon-only action buttons (Play, Generate, Delete).",
+    "buttons": "Sharp edges, flat colors. Primary button is accent_primary. Secondary buttons are surface_elevated with hover:bg-white/10.",
+    "forms": "Use Shadcn Form components. Dark inputs with 1px border. No native inputs."
+  },
+  "motion": {
+    "rules": "Minimalist. Zero parallax. Zero floaty animations. Tool is for efficiency.",
+    "specifics": "Instant visual feedback on hover (150ms color transition). Progress bars should animate width smoothly."
+  },
+  "accessibility": {
+    "contrast": "Ensure APCA contrast. Text must be legible on dark panels.",
+    "testing": "All interactive elements, buttons, form inputs, menus, and scores MUST include a `data-testid` attribute using kebab-case role-based naming (e.g., `data-testid='generate-clip-button'`)."
+  },
+  "instructions_to_main_agent": [
+    "You are building a PRO VIDEO EDITING TOOL, not a SaaS landing page. It must feel like DaVinci Resolve or Adobe Premiere.",
+    "Strictly enforce Dark Mode. Do not build light mode toggles.",
+    "Do NOT use HTML-based components for advanced interactions. Rely completely on Shadcn UI (Dropdowns, Tabs, Sliders) styled for the dark theme.",
+    "Implement the 8 sub-metrics (Hook, Standalone clarity, Payoff, Info/entertainment value, Emotional interest, Curiosity, Context completeness, Social-media appeal) using Shadcn Progress or custom dense CSS bars.",
+    "Ensure `data-testid` attributes are present on EVERY interactive element for testing."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": "Build a distinctive, highly functional frontend. Avoid generic center-aligned single column layouts; use full-width dense grid/panel structures. DO NOT use `transition: all`. Create depth through layered design elements with z-index hierarchy and subtle 1px borders, avoiding massive shadows. Use sonner for toast notifications. Use lucide-react for icons. Missing categories will not fallback to placeholder images; text-only or custom SVGs must be used."
+}
