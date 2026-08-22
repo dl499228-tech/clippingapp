@@ -78,13 +78,17 @@ class Pipeline:
                 audio_path, float(metadata.get("duration", 0) or 0), workdir,
                 progress_cb=None,
             )
+            words = []
+            if isinstance(segments, dict):
+                words = segments.get("words", [])
+                segments = segments.get("segments", [])
             await self._log(job_id, "transcribe", "done",
-                            f"{len(segments)} transcript segments")
+                            f"{len(segments)} transcript segments · {len(words)} words")
 
             # ---- 3. Diarization (speaker labels) ----------------------
             await self._log(job_id, "diarize", "running", "Assigning speaker labels")
             segments = diarize(segments)
-            await self._update(job_id, transcript=segments, progress=60)
+            await self._update(job_id, transcript=segments, words=words, progress=60)
             await self._log(job_id, "diarize", "done", "Speaker labels assigned (heuristic)")
 
             # ---- 4. AI analysis ---------------------------------------

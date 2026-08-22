@@ -322,7 +322,233 @@ class TestPipelineLifecycle:
         job2 = requests.get(f"{API}/videos/{final['id']}", timeout=30).json()
         assert target not in [c["id"] for c in job2["clips"]]
 
-    def test_j_delete_job(self):
+    # ------------------- Editing / post-production -------------------
+    def test_j_config_has_editing_fields(self):
+        r = requests.get(f"{API}/config", timeout=30)
+        assert r.status_code == 200
+        d = r.json()
+        assert d.get("aspect_ratios") == ["9:16", "1:1", "original"]
+        assert set(d.get("caption_presets", [])) == {"clean", "bold", "highlight", "none"}
+        assert set(d.get("caption_positions", [])) == {"bottom", "center", "top"}
+
+    def test_k_update_edit_settings(self):
+        final = _shared.get("final")
+        if not final:
+            pytest.skip("no job")
+        clip_id = final["clips"][0]["id"]
+        payload = {
+            "aspect_ratio": "9:16",
+            "caption_preset": "bold",
+            "caption_position": "bottom",
+            "remove_pauses": False,
+            "dynamic_effects": False,
+            "reframe_mode": "face",
+            "start": final["clips"][0]["start"],
+            "end": final["clips"][0]["end"],
+        }
+        r = requests.put(f"{API}/videos/{final['id']}/clips/{clip_id}/edit",
+                         json=payload, timeout=30)
+        assert r.status_code == 200, r.text
+        clip = r.json()
+        assert clip["edit"]["aspect_ratio"] == "9:16"
+        assert clip["edit"]["caption_preset"] == "bold"
+        assert clip["edit"]["caption_position"] == "bottom"
+        assert clip["edit"]["reframe_mode"] == "face"
+        # Verify persistence via GET
+        job = requests.get(f"{API}/videos/{final['id']}", timeout=30).json()
+        c = next(c for c in job["clips"] if c["id"] == clip_id)
+        assert c["edit"]["caption_preset"] == "bold"
+        _shared["edit_clip_id"] = clip_id
+
+    def test_l_generate_and_save_captions(self):
+        final = _shared.get("final")
+        clip_id = _shared.get("edit_clip_id")
+        if not final or not clip_id:
+            pytest.skip("no clip")
+        r = requests.post(f"{API}/videos/{final['id']}/clips/{clip_id}/captions",
+                          timeout=180)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert isinstance(data.get("captions"), list)
+        assert len(data["captions"]) > 0, "expected caption lines from word timings"
+        for line in data["captions"]:
+            assert "start" in line and "end" in line and "text" in line
+            assert line["end"] >= line["start"]
+            assert isinstance(line["text"], str)
+        # Manually edit lines and save
+        edited = data["captions"][:]
+        edited[0] = {**edited[0], "text": "EDITED HEADLINE"}
+        r2 = requests.put(f"{API}/videos/{final['id']}/clips/{clip_id}/captions",
+                          json={"captions": edited}, timeout=30)
+        assert r2.status_code == 200
+        assert r2.json()["captions"][0]["text"] == "EDITED HEADLINE"
+        # Persistence
+        job = requests.get(f"{API}/videos/{final['id']}", timeout=30).json()
+        c = next(c for c in job["clips"] if c["id"] == clip_id)
+        assert c["captions"][0]["text"] == "EDITED HEADLINE"
+        assert c["captions_ready"] is True
+
+    def test_m_editing_does_not_rerun_analysis(self):
+        """Verify that setting edit / captions does not touch transcript,
+        clips list identity, or step_logs (no new analysis stages)."""
+        final = _shared.get("final")
+        if not final:
+            pytest.skip("no job")
+        job_before = requests.get(f"{API}/videos/{final['id']}", timeout=30).json()
+        # Snapshot invariants
+        transcript_before = job_before["transcript"]
+        clip_ids_before = sorted(c["id"] for c in job_before["clips"])
+        step_logs_before = len(job_before["step_logs"])
+
+        # Poke edit endpoint again
+        clip_id = _shared.get("edit_clip_id")
+        r = requests.put(f"{API}/videos/{final['id']}/clips/{clip_id}/edit",
+                         json={"aspect_ratio": "1:1", "caption_preset": "clean",
+                               "caption_position": "top", "remove_pauses": False,
+                               "dynamic_effects": False, "reframe_mode": "preserve",
+                               "start": None, "end": None},
+                         timeout=30)
+        assert r.status_code == 200
+
+        job_after = requests.get(f"{API}/videos/{final['id']}", timeout=30).json()
+        assert job_after["transcript"] == transcript_before, "transcript changed on edit!"
+        assert sorted(c["id"] for c in job_after["clips"]) == clip_ids_before
+        assert len(job_after["step_logs"]) == step_logs_before, "step_logs grew - re-analysis?"
+
+        # Reset back to 9:16 for the render tests
+        requests.put(f"{API}/videos/{final['id']}/clips/{clip_id}/edit",
+                     json={"aspect_ratio": "9:16", "caption_preset": "bold",
+                           "caption_position": "bottom", "remove_pauses": False,
+                           "dynamic_effects": False, "reframe_mode": "face",
+                           "start": None, "end": None}, timeout=30)
+
+    def test_n_render_export_916(self):
+        final = _shared.get("final")
+        clip_id = _shared.get("edit_clip_id")
+        if not final or not clip_id:
+            pytest.skip("no clip")
+        r = requests.post(f"{API}/videos/{final['id']}/clips/{clip_id}/render", timeout=30)
+        assert r.status_code == 200
+        assert r.json().get("rendering") is True
+
+        # Poll for export_status done - allow generous time (safe-render fallbacks)
+        deadline = time.time() + 240
+        seen = set()
+        clip = None
+        while time.time() < deadline:
+            job = requests.get(f"{API}/videos/{final['id']}", timeout=30).json()
+            c = next(c for c in job["clips"] if c["id"] == clip_id)
+            seen.add(c["export_status"])
+            if c["export_status"] == "done":
+                clip = c
+                break
+            if c["export_status"] == "error":
+                pytest.fail(f"render error: {c.get('export_error')}")
+            time.sleep(3)
+        assert clip is not None, f"render did not complete, saw: {seen}"
+        assert "rendering" in seen, f"expected to observe rendering state, saw: {seen}"
+        assert clip.get("export_path") and os.path.exists(clip["export_path"])
+        _shared["export_ready_clip_id"] = clip_id
+
+        # Download and check dims via ffprobe
+        r = requests.get(f"{API}/videos/{final['id']}/clips/{clip_id}/export/download",
+                         timeout=60, stream=True)
+        assert r.status_code == 200
+        assert r.headers.get("content-type", "").startswith("video/")
+        content = r.content
+        assert b"ftyp" in content[:64], "not an mp4"
+        # Save then ffprobe to check dims
+        out = f"/tmp/export_{clip_id}.mp4"
+        with open(out, "wb") as fh:
+            fh.write(content)
+        import json as _json
+        import subprocess
+        p = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height,codec_name",
+             "-show_entries", "format=duration",
+             "-of", "json", out],
+            capture_output=True, text=True, timeout=30
+        )
+        info = _json.loads(p.stdout)
+        w = info["streams"][0]["width"]
+        h = info["streams"][0]["height"]
+        codec = info["streams"][0]["codec_name"]
+        dur = float(info["format"]["duration"])
+        assert (w, h) == (1080, 1920), f"expected 1080x1920, got {w}x{h}"
+        assert codec == "h264", f"expected h264, got {codec}"
+        assert dur > 0.5, f"suspicious duration {dur}"
+        # Audio track exists (aac)
+        pa = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=codec_name",
+             "-of", "csv=p=0", out],
+            capture_output=True, text=True, timeout=30
+        )
+        assert "aac" in pa.stdout.strip(), f"expected aac audio, got {pa.stdout!r}"
+
+    def test_o_export_range_stream(self):
+        final = _shared.get("final")
+        clip_id = _shared.get("export_ready_clip_id")
+        if not final or not clip_id:
+            pytest.skip("no rendered export")
+        r = requests.get(
+            f"{API}/videos/{final['id']}/clips/{clip_id}/export/stream",
+            headers={"Range": "bytes=0-2047"}, timeout=30,
+        )
+        assert r.status_code == 206
+        assert r.headers.get("Accept-Ranges") == "bytes"
+        assert "content-range" in {k.lower() for k in r.headers.keys()}
+        assert len(r.content) == 2048
+
+    def test_p_batch_render(self):
+        final = _shared.get("final")
+        if not final:
+            pytest.skip("no job")
+        job = requests.get(f"{API}/videos/{final['id']}", timeout=30).json()
+        # pick up to 2 clips that are NOT already exported
+        candidates = [c for c in job["clips"]
+                      if c["export_status"] != "done"][:2]
+        if len(candidates) < 2:
+            # fall back: use any 2 clips (re-render is fine)
+            candidates = job["clips"][:2]
+        ids = [c["id"] for c in candidates]
+        if len(ids) < 2:
+            pytest.skip("need >=2 clips for batch")
+
+        r = requests.post(f"{API}/videos/{final['id']}/clips/batch-render",
+                          json={"clip_ids": ids}, timeout=30)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["rendering"] == len(ids)
+        assert set(body["clip_ids"]) == set(ids)
+
+        # Poll until all target clips leave 'rendering'
+        deadline = time.time() + 360
+        done_ids = set()
+        errors = {}
+        while time.time() < deadline:
+            j = requests.get(f"{API}/videos/{final['id']}", timeout=30).json()
+            for cid in ids:
+                c = next(x for x in j["clips"] if x["id"] == cid)
+                if c["export_status"] == "done":
+                    done_ids.add(cid)
+                elif c["export_status"] == "error":
+                    errors[cid] = c.get("export_error")
+            if len(done_ids) + len(errors) == len(ids):
+                break
+            time.sleep(3)
+
+        # Independent export_status: one failure should not stop the rest.
+        # We assert most clips finished with a terminal status.
+        terminal = len(done_ids) + len(errors)
+        assert terminal == len(ids), (
+            f"batch did not reach terminal states: done={done_ids} errors={errors}"
+        )
+        # At least one clip should have rendered successfully.
+        assert len(done_ids) >= 1, f"none of the batch clips rendered. errors={errors}"
+
+    def test_zz_delete_job(self):
         final = _shared.get("final")
         if not final:
             pytest.skip("no job")

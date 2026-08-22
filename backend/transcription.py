@@ -56,6 +56,7 @@ class WhisperApiProvider(TranscriptionProvider):
                              self.chunk_seconds, total_duration)
 
         segments: List[dict] = []
+        words: List[dict] = []
         total = len(chunks)
         for idx, (chunk_path, offset) in enumerate(chunks):
             if progress_cb:
@@ -66,14 +67,13 @@ class WhisperApiProvider(TranscriptionProvider):
                     resp = await stt.transcribe(
                         file=fh, model="whisper-1",
                         response_format="verbose_json",
-                        timestamp_granularities=["segment"],
+                        timestamp_granularities=["segment", "word"],
                     )
             except Exception as e:  # noqa: BLE001
                 raise TranscriptionError(f"Whisper API failed on chunk {idx + 1}: {e}") from e
 
             raw_segments = getattr(resp, "segments", None) or []
             if not raw_segments and getattr(resp, "text", "").strip():
-                # No segment timing returned; keep as one block for this chunk.
                 raw_segments = [{"start": 0.0, "end": min(self.chunk_seconds, total_duration),
                                  "text": resp.text}]
             for seg in raw_segments:
@@ -83,9 +83,18 @@ class WhisperApiProvider(TranscriptionProvider):
                 if text:
                     segments.append({"start": start, "end": end, "text": text})
 
+            for w in (getattr(resp, "words", None) or []):
+                token = str(_attr(w, "word", "")).strip()
+                if token:
+                    words.append({
+                        "start": float(_attr(w, "start", 0.0)) + offset,
+                        "end": float(_attr(w, "end", 0.0)) + offset,
+                        "word": token,
+                    })
+
         if not segments:
             raise TranscriptionError("Transcription returned no text")
-        return segments
+        return {"segments": segments, "words": words}
 
 
 # ---------------------------------------------------------------------------
@@ -111,23 +120,28 @@ class FasterWhisperProvider(TranscriptionProvider):
 
         def _work():
             model = self._load()
-            seg_iter, _info = model.transcribe(audio_path, vad_filter=True)
-            out = []
+            seg_iter, _info = model.transcribe(audio_path, vad_filter=True,
+                                               word_timestamps=True)
+            out_segs, out_words = [], []
             for seg in seg_iter:
                 text = (seg.text or "").strip()
                 if text:
-                    out.append({"start": float(seg.start), "end": float(seg.end), "text": text})
-            return out
+                    out_segs.append({"start": float(seg.start), "end": float(seg.end), "text": text})
+                for w in (getattr(seg, "words", None) or []):
+                    token = (w.word or "").strip()
+                    if token:
+                        out_words.append({"start": float(w.start), "end": float(w.end), "word": token})
+            return {"segments": out_segs, "words": out_words}
 
         if progress_cb:
             progress_cb(10, f"Running local whisper ({self.model_size})")
         try:
-            segments = await asyncio.to_thread(_work)
+            result = await asyncio.to_thread(_work)
         except Exception as e:  # noqa: BLE001
             raise TranscriptionError(f"Local whisper failed: {e}") from e
-        if not segments:
+        if not result["segments"]:
             raise TranscriptionError("Local transcription returned no text")
-        return segments
+        return result
 
 
 def _attr(obj, key, default):

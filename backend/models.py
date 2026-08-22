@@ -57,6 +57,40 @@ class TranscriptSegment(BaseModel):
     speaker: Optional[str] = None
 
 
+class Word(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    start: float
+    end: float
+    word: str
+
+
+class CaptionLine(BaseModel):
+    """A burned-caption line on the CLIP-relative (output) timeline."""
+    model_config = ConfigDict(extra="ignore")
+    start: float
+    end: float
+    text: str
+    words: List[Word] = Field(default_factory=list)
+
+
+# Editing / post-production settings (separate from AI analysis).
+ASPECT_RATIOS = ["9:16", "1:1", "original"]
+CAPTION_PRESETS = ["clean", "bold", "highlight", "none"]
+CAPTION_POSITIONS = ["bottom", "center", "top"]
+
+
+class EditSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    aspect_ratio: str = "9:16"
+    caption_preset: str = "clean"
+    caption_position: str = "bottom"
+    remove_pauses: bool = False
+    dynamic_effects: bool = False
+    reframe_mode: str = "face"        # "face" (track speaker) | "preserve" (pad, screen content)
+    start: Optional[float] = None      # boundary override (source seconds)
+    end: Optional[float] = None
+
+
 class StepLog(BaseModel):
     model_config = ConfigDict(extra="ignore")
     step: str
@@ -94,6 +128,14 @@ class Clip(BaseModel):
     status: str = "candidate"        # candidate | generating | generated | error
     clip_path: Optional[str] = None
     error: Optional[str] = None
+    # ---- Post-production (editing) state ----
+    edit: Optional[EditSettings] = None
+    captions: List[CaptionLine] = Field(default_factory=list)
+    captions_ready: bool = False
+    export_path: Optional[str] = None
+    export_status: str = "none"      # none | rendering | done | error
+    export_error: Optional[str] = None
+    export_aspect: Optional[str] = None
 
 
 class Job(BaseModel):
@@ -110,6 +152,7 @@ class Job(BaseModel):
     audio_path: Optional[str] = None
     metadata: VideoMetadata = Field(default_factory=VideoMetadata)
     transcript: List[TranscriptSegment] = Field(default_factory=list)
+    words: List[Word] = Field(default_factory=list)
     clips: List[Clip] = Field(default_factory=list)
     step_logs: List[StepLog] = Field(default_factory=list)
     created_at: str = Field(default_factory=_now)
@@ -118,3 +161,7 @@ class Job(BaseModel):
 
 class GenerateClipRequest(BaseModel):
     clip_ids: Optional[List[str]] = None   # None = all candidates
+
+
+class BatchRenderRequest(BaseModel):
+    clip_ids: List[str]

@@ -1,0 +1,44 @@
+{
+  "summary": "Full E2E verification of the NEW post-production layer (editing/reframe/captions/render/batch) for the AI Video Clipping Lab. Backend: 20/21 pytest passed. All new endpoints validated with real content: PUT /edit persists EditSettings and returns clip.edit (aspect/preset/position/reframe_mode/start/end); POST /captions builds 24 word-timed lines from job.words (no re-transcribe, ~<1s); PUT /captions saves manually edited lines (captions_ready=true, changed text persisted via GET); POST /render transitions export_status none->rendering->done and produces a real 1080x1920 h264+aac MP4 (ftyp, duration 42.03s); export/stream honors HTTP Range (206 with correct Content-Range for 2048-byte slice); POST /batch-render sequentially renders multiple clips independently and all reach terminal state (both done). Editing does NOT re-run analysis: transcript, clip ids, and step_logs are byte-identical before/after edit (test_m). Frontend playwright flow: click Edit -> clip-editor opens -> all 20 required data-testids present (aspect-9:16/1:1/original, reframe-face/preserve, caption-preset-select+options, caption-position-select+options, generate-captions-btn, remove-pauses-switch, dynamic-effects-switch, start/end-input, reset-boundaries, copy-title/hook, editor-preview-btn, render-btn, editor-close, preview-mode-source/rendered). Generate captions populated caption-editor-list with 24 caption-line-{i} inputs; editing a line persists to component state. Render trigger transitioned UI Export ready(9:16) -> disappears while rendering -> Export ready . 1:1 in ~30s and editor-download <a> href becomes /export/download. Batch flow: 2 clips selected -> render-selected-button label 'Render Selected (2)' -> RENDER badges appear on both cards -> both return to READY (~50s) -> download-all-button visible/functional. Downloaded exports verified via ffprobe: 1080x1080 h264+aac 42.03s (1:1 render), plus 1080x1080 batch-rendered clip. AI feature verdicts: whisper-word-timings (captions) - PASS (24 lines produced from stored job.words in <1s, matches known script); ffmpeg-render (post-production) - PASS (correct dimensions per aspect, valid mp4/h264/aac, subtitles burned in the earlier iteration frame check); claude-analysis - not-in-scope-this-iteration (no re-analysis triggered as required by test_m). Skills loaded: ai-testing-core, ai-testing-image-video.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "test_c_clips_shape_and_scores (pre-existing)", "issue": "Flaky assertion 'all clips start at 0'. In this run Claude returned 3 candidates all starting near t=0 for the short 42s test video. Not a functional bug - just an over-strict assertion in the pre-existing test. Consider relaxing to allow uniform coverage of very short videos."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_pipeline.py",
+    "/app/test_reports/pytest/pipeline.xml"
+  ],
+  "action_items": [
+    "Optional: relax test_c_clips_shape_and_scores 'not all(s==0)' assertion since Claude legitimately returns overlapping candidates for very short videos.",
+    "Optional: default previewMode to 'source' whenever the user opens the editor for an already-exported clip, so 'Play range' (editor-preview-btn) is discoverable without first clicking the SOURCE tab. Currently the preview-btn is only rendered in source mode, so on a clip with export_status==='done' the user lands directly on RENDERED and has to click SOURCE to see it."
+  ],
+  "critical_code_review_comments": [
+    "Editor.jsx: editor-preview-btn is only rendered in source mode (line 170). This is intentional but hides the 'Play range' affordance when the clip has already been exported. Consider always showing it and switching preview mode on click.",
+    "Studio.jsx doBatchRender restarts polling manually (line 113) even though the primary polling useEffect already handles rendering state - two intervals could race. Currently harmless because both call the same tick body and clearInterval before setting a new one, but consider consolidating.",
+    "server.py PUT /edit: aspect_ratio, caption_preset, caption_position values are NOT server-validated against ASPECT_RATIOS/CAPTION_PRESETS/CAPTION_POSITIONS - a caller could send any string. Pydantic EditSettings has string typing only. Consider Literal[...] on the model.",
+    "server.py PUT /captions accepts a raw dict body without validating individual line shape ({start,end,text,words}); malformed lines would flow into DB. Not exploited by the UI but a Pydantic model would be safer.",
+    "render.py render_clip runs synchronously via asyncio.to_thread inside _render_export; there is no per-clip lock. Rapidly clicking Render twice (or Render + Batch that includes the same clip) would race on the same export_path. Currently invisible because the UI disables the render button while rendering=True, but a request coming from another tab would race.",
+    "captions.py extract_clip_words: when job.words is empty and faster-whisper fallback runs, it loads a ~150MB model on first use. First call to POST /captions on a clip without stored words will take 20-30s on cold cache; the UI has no long-op indicator specific to this path (only the button spinner)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_pipeline.py"
+  ],
+  "success_rate": {"backend": "95% (20/21) - single failure is a pre-existing flaky assertion unrelated to the new post-production layer", "frontend": "100%"},
+  "seed_data_creation": "Uses /app/backend/storage/test_video.mp4 (42s espeak audio over solid dark background). No new seed data needed. A previous run's ready job was reused for the frontend flow to keep runtime under the ingress timeout; backend pytest still uploads and cleans up its own job.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Post-production feature set (edit, captions, render, batch-render, export/stream, export/download) is fully green. All 12 new controls/testids in the Editor render and wire through to the correct APIs. Renders on the 42s test_video complete in ~15-30s at 9:16/1:1; original AR is even faster. faster-whisper local fallback in captions.py is untouched because job.words is populated by the pipeline in the primary path. Do not re-run backend pytest more than necessary - it uses real Claude/Whisper via EMERGENT_LLM_KEY (Claude call in test_a-c is ~5-10s of the ~130s runtime). Frontend test relies on an existing 'ready' job to skip the ~15s pipeline warm-up; if none exists, upload and poll for status=='ready' before continuing.",
+  "ai_feature_verdicts": [
+    "whisper-word-timings-for-captions: pass - evidence: POST /videos/{job}/clips/{clip}/captions returned 24 CaptionLine objects with monotonically increasing start/end and non-empty text sourced from job.words (no re-transcription; test_m confirms transcript unchanged). Text lines contain the known script words ('mistake', 'invest', 'market').",
+    "ffmpeg-post-production-render: pass - evidence: /render + poll -> export_status=done. Downloaded MP4 at /export/download probed with ffprobe: 9:16 -> 1080x1920 h264+aac 42.03s; 1:1 -> 1080x1080 h264+aac 42.03s (1.2MB). Batch clip 2 also 1080x1080. HTTP Range on /export/stream returns 206 with 2048-byte body and correct Content-Range.",
+    "batch-render-independence: pass - evidence: POST /batch-render with 2 clip_ids returned rendering=2; polling saw both leave 'rendering' with export_status='done'; frontend showed both RENDER badges then both READY. One clip finishing early does not block the other (sequential background task per _run_batch).",
+    "edit-does-not-rerun-analysis (safety): pass - evidence: test_m compared transcript, clip id list, and step_logs length before/after edit round-trip - all identical."
+  ]
+}

@@ -1,11 +1,12 @@
 import React, { useState } from "react";
 import {
   Play, Download, Trash2, Loader2, ChevronDown, ChevronUp,
-  Sparkles, Clapperboard, CheckCircle2, AlertTriangle,
+  Sparkles, Wand2, CheckCircle2, AlertTriangle, Clapperboard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ScoreBar, OverallScore } from "./ScoreBar";
-import { fmtTime, fmtDuration, clipDownloadUrl } from "@/lib/studioApi";
+import { fmtTime, fmtDuration, exportDownloadUrl } from "@/lib/studioApi";
 
 const CATEGORY_COLORS = {
   hook: "#2D8CFF", story: "#A78BFA", insight: "#10B981", emotional: "#F472B6",
@@ -15,16 +16,23 @@ const CATEGORY_COLORS = {
 
 const METRICS = ["hook", "standalone", "payoff", "info_value", "emotional", "curiosity", "context", "social_appeal"];
 
-function ClipCard({ clip, index, jobId, onPreview, onGenerate, onDelete }) {
+function ClipCard({ clip, index, jobId, onPreview, onEdit, onDelete, selected, onToggleSelect }) {
   const [open, setOpen] = useState(false);
   const catColor = CATEGORY_COLORS[clip.category] || "#9CA3AF";
-  const generating = clip.status === "generating";
-  const generated = clip.status === "generated";
+  const exp = clip.export_status || "none";
+  const exporting = exp === "rendering";
+  const exported = exp === "done";
 
   return (
     <div className="border border-[#2E2E32] bg-[#18181A] rounded-sm" data-testid={`clip-card-${clip.id}`}>
       <div className="p-3">
         <div className="flex gap-3">
+          <Checkbox
+            checked={selected}
+            onCheckedChange={() => onToggleSelect(clip.id)}
+            className="mt-1 border-[#2E2E32] data-[state=checked]:bg-[#2D8CFF] data-[state=checked]:border-[#2D8CFF]"
+            data-testid={`select-clip-${clip.id}`}
+          />
           <OverallScore value={clip.overall_score} />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
@@ -35,8 +43,9 @@ function ClipCard({ clip, index, jobId, onPreview, onGenerate, onDelete }) {
               >
                 {clip.category}
               </span>
-              {generated && <CheckCircle2 className="h-3 w-3 text-[#10B981]" />}
-              {clip.status === "error" && <AlertTriangle className="h-3 w-3 text-[#EF4444]" />}
+              {exported && <span className="text-[9px] font-mono text-[#10B981] flex items-center gap-0.5"><CheckCircle2 className="h-3 w-3" />READY</span>}
+              {exporting && <span className="text-[9px] font-mono text-[#F59E0B] flex items-center gap-0.5"><Loader2 className="h-3 w-3 animate-spin" />RENDER</span>}
+              {exp === "error" && <AlertTriangle className="h-3 w-3 text-[#EF4444]" />}
             </div>
             <p className="text-sm text-neutral-100 font-medium leading-snug mt-1 truncate" title={clip.title}>
               {clip.title}
@@ -60,23 +69,20 @@ function ClipCard({ clip, index, jobId, onPreview, onGenerate, onDelete }) {
           >
             <Play className="h-3 w-3 mr-1" /> Preview
           </Button>
-          {generated ? (
-            <a href={clipDownloadUrl(jobId, clip.id)} data-testid={`download-clip-${clip.id}`}>
-              <Button size="sm" className="h-7 px-2 text-xs rounded-sm bg-[#2D8CFF] hover:bg-[#1A73E8]">
-                <Download className="h-3 w-3 mr-1" /> Download
+          <Button
+            size="sm"
+            className="h-7 px-2.5 text-xs rounded-sm bg-[#2D8CFF] hover:bg-[#1A73E8]"
+            onClick={() => onEdit(clip)}
+            data-testid={`edit-clip-${clip.id}`}
+          >
+            <Wand2 className="h-3 w-3 mr-1" /> Edit
+          </Button>
+          {exported && (
+            <a href={exportDownloadUrl(jobId, clip.id)} data-testid={`download-export-${clip.id}`}>
+              <Button size="sm" className="h-7 px-2 text-xs rounded-sm bg-[#10B981] hover:bg-[#0e9f70]">
+                <Download className="h-3 w-3 mr-1" /> MP4
               </Button>
             </a>
-          ) : (
-            <Button
-              size="sm"
-              className="h-7 px-2 text-xs rounded-sm bg-[#2D8CFF] hover:bg-[#1A73E8]"
-              disabled={generating}
-              onClick={() => onGenerate(clip)}
-              data-testid={`generate-clip-${clip.id}`}
-            >
-              {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Clapperboard className="h-3 w-3 mr-1" />}
-              {generating ? "Rendering" : "Generate"}
-            </Button>
           )}
           <button
             onClick={() => onDelete(clip)}
@@ -96,8 +102,8 @@ function ClipCard({ clip, index, jobId, onPreview, onGenerate, onDelete }) {
           </button>
         </div>
 
-        {clip.status === "error" && clip.error && (
-          <p className="mt-2 text-[10px] font-mono text-[#EF4444]">{clip.error}</p>
+        {exp === "error" && clip.export_error && (
+          <p className="mt-2 text-[10px] font-mono text-[#EF4444]">{clip.export_error}</p>
         )}
       </div>
 
@@ -125,10 +131,11 @@ function ClipCard({ clip, index, jobId, onPreview, onGenerate, onDelete }) {
   );
 }
 
-export default function ClipResults({ job, onPreview, onGenerate, onGenerateAll, onDelete }) {
+export default function ClipResults({ job, onPreview, onEdit, onDelete, selectedIds, onToggleSelect, onBatchRender, onDownloadAll }) {
   const clips = job?.clips || [];
-  const anyGenerating = clips.some((c) => c.status === "generating");
-  const pendingCount = clips.filter((c) => c.status !== "generated").length;
+  const selectedCount = selectedIds?.size || 0;
+  const doneCount = clips.filter((c) => c.export_status === "done").length;
+  const anyRendering = clips.some((c) => c.export_status === "rendering");
 
   return (
     <div className="flex flex-col h-full min-h-0" data-testid="clip-results">
@@ -139,18 +146,28 @@ export default function ClipResults({ job, onPreview, onGenerate, onGenerateAll,
             Candidate Clips · {clips.length}
           </span>
         </div>
-        {clips.length > 0 && (
+        <div className="flex items-center gap-1.5">
+          {doneCount > 0 && (
+            <Button
+              size="sm" variant="secondary"
+              className="h-7 px-2 text-xs rounded-sm bg-[#222224] hover:bg-white/10 border border-[#2E2E32]"
+              onClick={onDownloadAll}
+              data-testid="download-all-button"
+            >
+              <Download className="h-3 w-3 mr-1" /> All ({doneCount})
+            </Button>
+          )}
           <Button
             size="sm"
             className="h-7 px-2.5 text-xs rounded-sm bg-[#2D8CFF] hover:bg-[#1A73E8]"
-            disabled={anyGenerating || pendingCount === 0}
-            onClick={onGenerateAll}
-            data-testid="generate-all-button"
+            disabled={selectedCount === 0 || anyRendering}
+            onClick={onBatchRender}
+            data-testid="render-selected-button"
           >
-            {anyGenerating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Clapperboard className="h-3 w-3 mr-1" />}
-            Generate All
+            {anyRendering ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Clapperboard className="h-3 w-3 mr-1" />}
+            Render Selected{selectedCount ? ` (${selectedCount})` : ""}
           </Button>
-        )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
@@ -168,8 +185,10 @@ export default function ClipResults({ job, onPreview, onGenerate, onGenerateAll,
               index={i}
               jobId={job.id}
               onPreview={onPreview}
-              onGenerate={onGenerate}
+              onEdit={onEdit}
               onDelete={onDelete}
+              selected={selectedIds?.has(clip.id)}
+              onToggleSelect={onToggleSelect}
             />
           ))
         )}

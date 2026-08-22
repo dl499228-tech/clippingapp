@@ -1,0 +1,37 @@
+[Script Info]
+ScriptType: v4.00+
+WrapStyle: 0
+PlayResX: 1080
+PlayResY: 1080
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Default,Liberation Sans,75,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,3,2,60,60,140,1
+
+[Events]
+Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+Dialogue: 0,0:00:00.00,0:00:01.32,Default,,0,0,0,,Here is the single\Nbiggest
+Dialogue: 0,0:00:01.32,0:00:02.86,Default,,0,0,0,,mistake people make when\Nthey
+Dialogue: 0,0:00:02.86,0:00:04.80,Default,,0,0,0,,start investing They\Nwait for
+Dialogue: 0,0:00:04.80,0:00:06.82,Default,,0,0,0,,the perfect moment The\Ntruth
+Dialogue: 0,0:00:06.82,0:00:08.68,Default,,0,0,0,,is the perfect moment\Nnever
+Dialogue: 0,0:00:08.68,0:00:10.62,Default,,0,0,0,,comes and waiting costs\Nyou
+Dialogue: 0,0:00:10.62,0:00:12.42,Default,,0,0,0,,more than being wrong\NLet me
+Dialogue: 0,0:00:12.42,0:00:14.12,Default,,0,0,0,,tell you a quick story A
+Dialogue: 0,0:00:14.12,0:00:15.44,Default,,0,0,0,,friend of mine saved\Nmoney
+Dialogue: 0,0:00:15.44,0:00:16.92,Default,,0,0,0,,for 10 years but never
+Dialogue: 0,0:00:16.92,0:00:18.74,Default,,0,0,0,,invested a single dollar\NHe
+Dialogue: 0,0:00:18.74,0:00:20.12,Default,,0,0,0,,lost more to inflation\Nthan
+Dialogue: 0,0:00:20.12,0:00:21.34,Default,,0,0,0,,he ever would have lost\Nin
+Dialogue: 0,0:00:21.34,0:00:23.10,Default,,0,0,0,,the market Now here is\Nthe
+Dialogue: 0,0:00:23.10,0:00:25.04,Default,,0,0,0,,surprising part Studies\Nshow
+Dialogue: 0,0:00:25.04,0:00:26.56,Default,,0,0,0,,that time in the market\Nbeats
+Dialogue: 0,0:00:26.56,0:00:27.98,Default,,0,0,0,,timing the market almost
+Dialogue: 0,0:00:27.98,0:00:29.72,Default,,0,0,0,,every single time Just
+Dialogue: 0,0:00:29.72,0:00:31.28,Default,,0,0,0,,staying invested is the\Nreal
+Dialogue: 0,0:00:31.28,0:00:33.14,Default,,0,0,0,,secret So my strong\Nopinion
+Dialogue: 0,0:00:33.14,0:00:35.16,Default,,0,0,0,,is this Stop trying to\Nbe
+Dialogue: 0,0:00:35.16,0:00:36.72,Default,,0,0,0,,a genius Be consistent
+Dialogue: 0,0:00:36.72,0:00:39.04,Default,,0,0,0,,instead Consistency is\Nboring
+Dialogue: 0,0:00:39.30,0:00:40.58,Default,,0,0,0,,but boring makes you\Nrich

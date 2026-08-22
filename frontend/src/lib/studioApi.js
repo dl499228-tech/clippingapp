@@ -35,6 +35,22 @@ export const clipStreamUrl = (jobId, clipId) =>
 export const clipDownloadUrl = (jobId, clipId) =>
   `${API}/videos/${jobId}/clips/${clipId}/download`;
 
+// ---- post-production (editing) ----
+export const updateEdit = (jobId, clipId, settings) =>
+  api.put(`/videos/${jobId}/clips/${clipId}/edit`, settings).then((r) => r.data);
+export const buildCaptions = (jobId, clipId) =>
+  api.post(`/videos/${jobId}/clips/${clipId}/captions`).then((r) => r.data);
+export const saveCaptions = (jobId, clipId, captions) =>
+  api.put(`/videos/${jobId}/clips/${clipId}/captions`, { captions }).then((r) => r.data);
+export const renderExport = (jobId, clipId) =>
+  api.post(`/videos/${jobId}/clips/${clipId}/render`).then((r) => r.data);
+export const batchRender = (jobId, clipIds) =>
+  api.post(`/videos/${jobId}/clips/batch-render`, { clip_ids: clipIds }).then((r) => r.data);
+export const exportStreamUrl = (jobId, clipId) =>
+  `${API}/videos/${jobId}/clips/${clipId}/export/stream`;
+export const exportDownloadUrl = (jobId, clipId) =>
+  `${API}/videos/${jobId}/clips/${clipId}/export/download`;
+
 // ---- formatting helpers ----
 export const fmtTime = (s) => {
   if (s == null || isNaN(s)) return "00:00";

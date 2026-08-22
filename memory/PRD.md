@@ -23,13 +23,26 @@ Frontend (React) → `/api` (FastAPI) → background Pipeline → { video_utils 
 ## Implemented (2026-06)
 - Upload with metadata (duration/resolution/fps/size/codecs), progress, format validation (mp4/mov/mkv/webm/avi/m4v/flv).
 - Content-type selector (auto + 9 types); provider selector.
-- Background pipeline: audio extract → transcribe (real Whisper) → diarize → Claude analysis → boundary snap + scoring → ready; live status timeline.
+- Background pipeline: audio extract → transcribe (real Whisper, now with word-level timestamps) → diarize → Claude analysis → boundary snap + scoring → ready; live status timeline.
 - Candidate clips: title, start/end, duration, reason, hook, category, confidence, 8 sub-scores + overall 0–100.
 - Clip rendering via FFmpeg (frame-accurate re-encode of only the clip, crf 18; stream-copy fallback).
-- Results dashboard: expandable score cards, Preview (player seek + auto-stop), Generate, Generate All, Delete, Download.
+- Results dashboard: expandable score cards, Preview (player seek + auto-stop), Delete, batch-select.
 - Video streaming with HTTP Range (206) for seeking; transcript viewer with clickable timestamps + speaker pills.
-- Graceful errors (unsupported/corrupt file, no audio, transcription/AI/render failures) with useful messages.
-- Verified: 14/14 backend tests + full UI flow, real Whisper + real Claude + real FFmpeg (no mocks).
+- Graceful errors with useful messages.
+
+## Post-Production Upgrade (2026-06) — short-form editor
+- Per-clip Editor (modal): live preview (source range play + rendered result), all controls, Render/Download.
+- 9:16 / 1:1 / Original reframing. Face-aware speaker tracking via OpenCV YuNet (`face_track.py`) with smoothed keyframes; "preserve" letterbox mode for gaming/screen; static-center fallback when no face.
+- Word-timed burned-in captions (`captions.py`): 3 presets (clean/bold/highlight) + none, positions (bottom/center/top), safe-area margins, manual line editing. Words sourced from stored transcript words (no re-transcribe); local faster-whisper fallback per-clip.
+- Optional smart pause/silence trimming (ffmpeg silencedetect + select/concat, conservative, default off) with caption/keyframe remap.
+- Optional subtle dynamic motion (gentle zoompan), default off.
+- Manual start/end boundary override — no AI re-analysis.
+- Content-aware defaults per content type (`reframe.default_edit_settings`).
+- Batch export: multi-select → Render Selected (sequential, independent failures) → Download All.
+- Export MP4 1080×1920 (9:16) / 1080×1080 (1:1) / source AR (original), H.264 + AAC 48k, +faststart.
+- Layered render fallbacks (full → no-motion → no-captions → safe letterbox) so a clip always renders.
+- Editing/rendering fully decoupled from analysis (`render.py`, `reframe.py`, `captions.py`, `face_track.py`).
+- Verified: 20/21 backend pytest (1 pre-existing flaky assertion in the QA harness, unrelated) + 100% frontend; real renders confirmed at all three aspect ratios with burned captions and pause-removal path.
 
 ## Extensibility Hooks (not yet built, no rewrite needed)
 Visual/scene analysis, face/speaker tracking, 9:16 reframing, captions, B-roll, gaming/livestream-specific detectors, better ranking, campaign scoring — all pluggable behind provider/analyzer/scorer interfaces.

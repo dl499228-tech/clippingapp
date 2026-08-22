@@ -22,10 +22,15 @@ from fastapi.responses import StreamingResponse, FileResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from starlette.middleware.cors import CORSMiddleware
 
-from models import Job, VideoMetadata, CONTENT_TYPES, GenerateClipRequest
+from models import (Job, VideoMetadata, CONTENT_TYPES, GenerateClipRequest,
+                    BatchRenderRequest, EditSettings, ASPECT_RATIOS,
+                    CAPTION_PRESETS, CAPTION_POSITIONS)
 from video_utils import probe_video, generate_clip, VideoProcessingError
 from transcription import available_providers
 from scoring import DEFAULT_WEIGHTS, SUB_METRICS
+from reframe import default_edit_settings
+import render as render_mod
+from captions import extract_clip_words, group_words_to_lines
 from pipeline import Pipeline
 
 ROOT_DIR = Path(__file__).parent
@@ -42,7 +47,8 @@ db = client[os.environ["DB_NAME"]]
 STORAGE_DIR = os.environ.get("STORAGE_DIR", str(ROOT_DIR / "storage"))
 UPLOAD_DIR = os.path.join(STORAGE_DIR, "uploads")
 CLIP_DIR = os.path.join(STORAGE_DIR, "clips")
-for d in (UPLOAD_DIR, CLIP_DIR, os.path.join(STORAGE_DIR, "work")):
+EXPORT_DIR = os.path.join(STORAGE_DIR, "exports")
+for d in (UPLOAD_DIR, CLIP_DIR, EXPORT_DIR, os.path.join(STORAGE_DIR, "work")):
     os.makedirs(d, exist_ok=True)
 
 ALLOWED_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".flv"}
@@ -124,6 +130,9 @@ async def get_config():
         "clip_max_seconds": int(os.environ.get("CLIP_MAX_SECONDS", "90")),
         "score_metrics": SUB_METRICS,
         "score_weights": DEFAULT_WEIGHTS,
+        "aspect_ratios": ASPECT_RATIOS,
+        "caption_presets": CAPTION_PRESETS,
+        "caption_positions": CAPTION_POSITIONS,
     }
 
 
@@ -351,6 +360,151 @@ async def delete_clip(job_id: str, clip_id: str):
     clips = [c for c in clips if c["id"] != clip_id]
     await db.jobs.update_one({"id": job_id}, {"$set": {"clips": clips}})
     return {"deleted": True}
+
+
+# ---------------------------------------------------------------------------
+# Editing / post-production
+# ---------------------------------------------------------------------------
+def _find_clip(job: dict, clip_id: str) -> dict:
+    clip = next((c for c in job.get("clips", []) if c["id"] == clip_id), None)
+    if not clip:
+        raise HTTPException(status_code=404, detail="Clip not found")
+    return clip
+
+
+def _ensure_edit(clip: dict, job: dict) -> dict:
+    if not clip.get("edit"):
+        ct = job.get("detected_content_type") or job.get("content_type") or "auto"
+        clip["edit"] = default_edit_settings(ct)
+    return clip["edit"]
+
+
+@api_router.put("/videos/{job_id}/clips/{clip_id}/edit")
+async def update_edit(job_id: str, clip_id: str, settings: EditSettings):
+    job = await _get_job_or_404(job_id)
+    clips = job.get("clips", [])
+    clip = _find_clip(job, clip_id)
+    _ensure_edit(clip, job)
+    data = settings.model_dump()
+    for k in ("aspect_ratio", "caption_preset", "caption_position",
+              "remove_pauses", "dynamic_effects", "reframe_mode"):
+        if data.get(k) is not None:
+            clip["edit"][k] = data[k]
+    clip["edit"]["start"] = data.get("start")
+    clip["edit"]["end"] = data.get("end")
+    await db.jobs.update_one({"id": job_id}, {"$set": {"clips": clips}})
+    return clip
+
+
+@api_router.post("/videos/{job_id}/clips/{clip_id}/captions")
+async def build_captions_endpoint(job_id: str, clip_id: str):
+    job = await _get_job_or_404(job_id)
+    clips = job.get("clips", [])
+    clip = _find_clip(job, clip_id)
+    edit = _ensure_edit(clip, job)
+    start = edit.get("start") if edit.get("start") is not None else clip["start"]
+    end = edit.get("end") if edit.get("end") is not None else clip["end"]
+    workdir = os.path.join(STORAGE_DIR, "work", job_id, "edit", clip_id)
+
+    def _work():
+        words = extract_clip_words(job, float(start), float(end), workdir)
+        return group_words_to_lines(words)
+
+    try:
+        lines = await asyncio.to_thread(_work)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Caption generation failed: {e}")
+    clip["captions"] = lines
+    clip["captions_ready"] = True
+    await db.jobs.update_one({"id": job_id}, {"$set": {"clips": clips}})
+    return {"captions": lines}
+
+
+@api_router.put("/videos/{job_id}/clips/{clip_id}/captions")
+async def edit_captions_endpoint(job_id: str, clip_id: str, body: dict):
+    job = await _get_job_or_404(job_id)
+    clips = job.get("clips", [])
+    clip = _find_clip(job, clip_id)
+    lines = body.get("captions", [])
+    if not isinstance(lines, list):
+        raise HTTPException(status_code=400, detail="captions must be a list")
+    clip["captions"] = lines
+    clip["captions_ready"] = True
+    await db.jobs.update_one({"id": job_id}, {"$set": {"clips": clips}})
+    return {"captions": lines}
+
+
+async def _render_export(job_id: str, clip_id: str):
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        return
+    clip = next((c for c in job.get("clips", []) if c["id"] == clip_id), None)
+    if not clip:
+        return
+    if not os.path.exists(job.get("video_path", "")):
+        await _set_clip(job_id, clip_id, export_status="error", export_error="Source video unavailable")
+        return
+    out = os.path.join(EXPORT_DIR, f"{job_id}_{clip_id}.mp4")
+    workdir = os.path.join(STORAGE_DIR, "work", job_id, "edit", clip_id)
+    await _set_clip(job_id, clip_id, export_status="rendering", export_error=None)
+    try:
+        result = await asyncio.to_thread(render_mod.render_clip, job, clip, out, workdir)
+        await _set_clip(job_id, clip_id, export_status="done", export_path=out,
+                        export_aspect=result.get("aspect"), export_error=None)
+    except render_mod.RenderError as e:
+        await _set_clip(job_id, clip_id, export_status="error", export_error=str(e))
+    except Exception as e:  # noqa: BLE001
+        await _set_clip(job_id, clip_id, export_status="error", export_error=f"Render failed: {e}")
+
+
+@api_router.post("/videos/{job_id}/clips/{clip_id}/render")
+async def render_clip_endpoint(job_id: str, clip_id: str):
+    job = await _get_job_or_404(job_id)
+    clips = job.get("clips", [])
+    clip = _find_clip(job, clip_id)
+    _ensure_edit(clip, job)
+    await db.jobs.update_one({"id": job_id}, {"$set": {"clips": clips}})
+    asyncio.create_task(_render_export(job_id, clip_id))
+    return {"rendering": True}
+
+
+@api_router.post("/videos/{job_id}/clips/batch-render")
+async def batch_render(job_id: str, body: BatchRenderRequest):
+    job = await _get_job_or_404(job_id)
+    ids = [c["id"] for c in job.get("clips", []) if c["id"] in set(body.clip_ids)]
+    if not ids:
+        raise HTTPException(status_code=400, detail="No matching clips")
+    for cid in ids:
+        await _set_clip(job_id, cid, export_status="rendering", export_error=None)
+
+    async def _run_batch():
+        for cid in ids:  # sequential; one failure does not stop the rest
+            await _render_export(job_id, cid)
+
+    asyncio.create_task(_run_batch())
+    return {"rendering": len(ids), "clip_ids": ids}
+
+
+@api_router.get("/videos/{job_id}/clips/{clip_id}/export/stream")
+async def stream_export(job_id: str, clip_id: str, request: Request):
+    job = await _get_job_or_404(job_id)
+    clip = _find_clip(job, clip_id)
+    path = clip.get("export_path")
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Export not ready")
+    return _range_response(path, request, "video/mp4")
+
+
+@api_router.get("/videos/{job_id}/clips/{clip_id}/export/download")
+async def download_export(job_id: str, clip_id: str):
+    job = await _get_job_or_404(job_id)
+    clip = _find_clip(job, clip_id)
+    path = clip.get("export_path")
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Export not ready")
+    safe = "".join(ch for ch in clip.get("title", "clip") if ch.isalnum() or ch in " -_")[:60].strip()
+    return FileResponse(path, media_type="video/mp4", filename=f"{safe or 'clip'}_short.mp4")
+
 
 
 app.include_router(api_router)

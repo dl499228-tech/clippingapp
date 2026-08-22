@@ -3,12 +3,13 @@ import { toast } from "sonner";
 import { Clapperboard, Cpu, RotateCw } from "lucide-react";
 import {
   getConfig, listVideos, getVideo, deleteVideo, reprocessVideo,
-  generateClip, generateAll, deleteClip,
+  deleteClip, batchRender, exportDownloadUrl,
 } from "@/lib/studioApi";
 import UploadPanel from "./UploadPanel";
 import JobList from "./JobList";
 import CenterStage from "./CenterStage";
 import ClipResults from "./ClipResults";
+import Editor from "./Editor";
 
 const PROCESSING = ["uploaded", "extracting_audio", "transcribing", "analyzing", "scoring"];
 
@@ -17,13 +18,15 @@ export default function Studio() {
   const [jobs, setJobs] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [job, setJob] = useState(null);
+  const [editingClipId, setEditingClipId] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
   const pollRef = useRef(null);
   const centerRef = useRef(null);
 
   const shouldPoll = useCallback((j) => {
     if (!j) return false;
     if (PROCESSING.includes(j.status)) return true;
-    return (j.clips || []).some((c) => c.status === "generating");
+    return (j.clips || []).some((c) => c.export_status === "rendering");
   }, []);
 
   const refreshJobs = useCallback(async () => {
@@ -41,6 +44,8 @@ export default function Studio() {
   useEffect(() => {
     clearInterval(pollRef.current);
     if (!selectedId) return;
+    setSelectedIds(new Set());
+    setEditingClipId(null);
 
     const tick = async () => {
       try {
@@ -89,23 +94,20 @@ export default function Studio() {
     toast.message(`Previewing: ${clip.title}`);
   };
 
-  const genOne = async (clip) => {
-    setJob((j) => ({ ...j, clips: j.clips.map((c) => c.id === clip.id ? { ...c, status: "generating" } : c) }));
-    try {
-      const updated = await generateClip(job.id, clip.id);
-      setJob((j) => ({ ...j, clips: j.clips.map((c) => c.id === clip.id ? updated : c) }));
-      if (updated?.status === "generated") toast.success("Clip rendered");
-      else toast.error(updated?.error || "Render failed");
-    } catch (e) {
-      toast.error(e?.response?.data?.detail || "Render failed");
-      const j = await getVideo(job.id); setJob(j);
-    }
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   };
 
-  const genAll = async () => {
+  const doBatchRender = async () => {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
     try {
-      const res = await generateAll(job.id);
-      toast.info(`Rendering ${res.generating} clip(s)…`);
+      const res = await batchRender(job.id, ids);
+      toast.info(`Rendering ${res.rendering} short(s)…`);
       const j = await getVideo(job.id); setJob(j);
       clearInterval(pollRef.current);
       pollRef.current = setInterval(async () => {
@@ -113,7 +115,18 @@ export default function Studio() {
         setJob(fresh);
         if (!shouldPoll(fresh)) clearInterval(pollRef.current);
       }, 2500);
-    } catch (e) { toast.error(e?.response?.data?.detail || "Generate all failed"); }
+    } catch (e) { toast.error(e?.response?.data?.detail || "Batch render failed"); }
+  };
+
+  const downloadAll = () => {
+    const done = (job?.clips || []).filter((c) => c.export_status === "done");
+    done.forEach((c, i) => setTimeout(() => {
+      const a = document.createElement("a");
+      a.href = exportDownloadUrl(job.id, c.id);
+      a.download = "";
+      document.body.appendChild(a); a.click(); a.remove();
+    }, i * 400));
+    toast.success(`Downloading ${done.length} clip(s)`);
   };
 
   const delClip = async (clip) => {
@@ -123,6 +136,20 @@ export default function Studio() {
       toast.success("Candidate removed");
     } catch (e) { toast.error("Delete failed"); }
   };
+
+  const startPolling = useCallback(() => {
+    if (!selectedId) return;
+    clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const fresh = await getVideo(selectedId);
+        setJob(fresh);
+        if (!shouldPoll(fresh)) clearInterval(pollRef.current);
+      } catch (e) { clearInterval(pollRef.current); }
+    }, 2500);
+  }, [selectedId, shouldPoll]);
+
+  const editingClip = job?.clips?.find((c) => c.id === editingClipId) || null;
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
@@ -190,9 +217,12 @@ export default function Studio() {
             <ClipResults
               job={job}
               onPreview={preview}
-              onGenerate={genOne}
-              onGenerateAll={genAll}
+              onEdit={(clip) => setEditingClipId(clip.id)}
               onDelete={delClip}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+              onBatchRender={doBatchRender}
+              onDownloadAll={downloadAll}
             />
           ) : (
             <div className="h-full flex items-center justify-center text-xs text-neutral-600">
@@ -201,6 +231,16 @@ export default function Studio() {
           )}
         </aside>
       </div>
+
+      {editingClip && (
+        <Editor
+          jobId={job.id}
+          clip={editingClip}
+          contentType={job.detected_content_type || job.content_type}
+          onClose={() => setEditingClipId(null)}
+          onRenderStart={startPolling}
+        />
+      )}
     </div>
   );
 }
