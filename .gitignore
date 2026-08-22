@@ -80,3 +80,10 @@ memory/test_credentials.md
 
 # Mobile development
 android-sdk/backend/storage/uploads/c214f2be-4b62-4363-9cd4-2a0eedbded95.mp4
+.env
+.env.*
+*.env
+credentials.json
+*.key
+.credentials
+backend/storage/uploads/c214f2be-4b62-4363-9cd4-2a0eedbded95.mp4

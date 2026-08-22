@@ -19,8 +19,9 @@ import subprocess
 from typing import List, Tuple
 
 import captions as caps
-from face_track import sample_face_centers, smooth_keyframes
-from reframe import build_reframe_filter, zoom_filter, target_dims
+from face_track import (sample_faces, sample_motion_centers, detect_two_speakers,
+                        build_camera_path, motion_camera_path)
+from reframe import (reframe_graph, split_graph, zoom_chain, target_dims, crop_window)
 
 
 class RenderError(Exception):
@@ -172,39 +173,58 @@ def render_clip(job: dict, clip: dict, out_path: str, workdir: str) -> dict:
         except Exception:  # noqa: BLE001
             ass_path = None
 
-    # 3) Face keyframes for reframing (best-effort)
-    kf = []
-    if aspect != "original" and mode == "face":
-        samples = sample_face_centers(base_video, base_ss, base_ss + out_dur)
-        kf = smooth_keyframes(samples, out_dur)
+    # 3) Build the reframing graph (distortion-free, eased virtual camera)
+    tw, th = target_dims(aspect, in_w, in_h)
+    two_layout = edit.get("two_speaker_layout", "off")
+    base_graph = None
 
-    reframe_vf = build_reframe_filter(aspect, mode, in_w, in_h, kf)
+    if aspect != "original" and mode != "preserve":
+        samples = sample_faces(base_video, base_ss, base_ss + out_dur)
+        two = detect_two_speakers(samples) if two_layout in ("stacked", "sidebyside") else None
+        if two:
+            left, right = two
+            base_graph = split_graph(two_layout, aspect, in_w, in_h, left, right)
+        else:
+            cw, ch = crop_window(aspect, in_w, in_h)
+            has_faces = any(s["faces"] for s in samples)
+            if has_faces:
+                xkf, ykf = build_camera_path(samples, out_dur, in_w, in_h, cw, ch)
+            else:
+                motion = sample_motion_centers(base_video, base_ss, base_ss + out_dur)
+                xkf, ykf = motion_camera_path(motion, out_dur, in_w, in_h, cw, ch)
+            base_graph = reframe_graph(aspect, mode, in_w, in_h, xkf, ykf)
 
-    # 4) Assemble filter variants (progressive fallback)
-    variants = []
-    def compose(rf, use_zoom, use_caps):
-        parts = [rf]
+    if base_graph is None:
+        base_graph = reframe_graph(aspect, mode, in_w, in_h, None, None)
+
+    safe_graph = reframe_graph(aspect, "preserve", in_w, in_h, None, None)
+
+    def compose(graph, use_zoom, use_caps):
+        parts = [graph]
+        cur = "[vr]"
         if use_zoom:
-            parts.append(zoom_filter(tw, th))
+            parts.append(zoom_chain(cur, "[vz]", tw, th))
+            cur = "[vz]"
         if use_caps and ass_path:
-            parts.append(f"subtitles={ass_path}")
-        return ",".join(parts)
+            parts.append(f"{cur}subtitles={ass_path}[vout]")
+            cur = "[vout]"
+        return ";".join(parts), cur
 
-    variants.append(("full", compose(reframe_vf, dynamic, True)))
+    # 4) Progressive fallbacks: full -> no-motion -> no-captions -> safe letterbox
+    variants = [("full", base_graph, dynamic, True)]
     if dynamic:
-        variants.append(("no-motion", compose(reframe_vf, False, True)))
+        variants.append(("no-motion", base_graph, False, True))
     if ass_path:
-        variants.append(("no-captions", compose(reframe_vf, False, False)))
-    # last resort: safe letterbox with no crop expression
-    safe_rf = build_reframe_filter(aspect, "preserve", in_w, in_h, [])
-    variants.append(("safe", compose(safe_rf, False, False)))
+        variants.append(("no-captions", base_graph, False, False))
+    variants.append(("safe", safe_graph, False, False))
 
     last_err = ""
-    for name, vf in variants:
+    for name, graph, uz, uc in variants:
+        fc, vmap = compose(graph, uz, uc)
         cmd = ["ffmpeg", "-y", "-ss", f"{base_ss:.3f}", "-i", base_video]
         if base_video == src:
             cmd += ["-t", f"{out_dur:.3f}"]
-        cmd += ["-vf", vf,
+        cmd += ["-filter_complex", fc, "-map", vmap, "-map", "0:a?",
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                 "-pix_fmt", "yuv420p", "-r", "30",
                 "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
@@ -215,9 +235,10 @@ def render_clip(job: dict, clip: dict, out_path: str, workdir: str) -> dict:
                 "path": out_path, "aspect": aspect, "variant": name,
                 "captions_used": bool(ass_path) and name in ("full", "no-motion"),
                 "pauses_removed": base_video != src,
+                "two_speaker": bool(two_layout != "off" and name != "safe" and "split" in base_graph[:20] if False else two_layout != "off"),
                 "duration": round(out_dur, 2),
                 "size_bytes": os.path.getsize(out_path),
             }
-        last_err = res.stderr[-300:] if res.stderr else "unknown ffmpeg error"
+        last_err = res.stderr[-400:] if res.stderr else "unknown ffmpeg error"
 
     raise RenderError(f"Render failed: {last_err}")
