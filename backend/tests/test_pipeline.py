@@ -47,7 +47,7 @@ class TestConfig:
         # local_whisper may not be enabled if faster-whisper not installed, but is expected here
         # We only require the API provider to be present.
         # Analysis model
-        assert "claude" in data["analysis_model"].lower()
+        assert "gemini" in data["analysis_model"].lower()
         # 8 sub-metrics
         assert len(data["score_metrics"]) == 8
         expected = {"hook", "standalone", "payoff", "info_value",

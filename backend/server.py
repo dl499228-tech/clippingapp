@@ -125,7 +125,7 @@ async def get_config():
         "content_types": CONTENT_TYPES,
         "transcription_providers": available_providers(),
         "default_provider": os.environ.get("TRANSCRIPTION_PROVIDER", "whisper_api"),
-        "analysis_model": os.environ.get("ANALYSIS_MODEL", "claude-sonnet-4-6"),
+        "analysis_model": os.environ.get("ANALYSIS_MODEL", "gemini-2.5-flash"),
         "clip_min_seconds": int(os.environ.get("CLIP_MIN_SECONDS", "20")),
         "clip_max_seconds": int(os.environ.get("CLIP_MAX_SECONDS", "90")),
         "score_metrics": SUB_METRICS,

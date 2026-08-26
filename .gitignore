@@ -15,7 +15,8 @@ node_modules/
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
-
+backend/storage/uploads/
+backend/storage/outputs/
 # Testing
 /coverage
 
@@ -87,3 +88,8 @@ credentials.json
 *.key
 .credentials
 backend/storage/uploads/c214f2be-4b62-4363-9cd4-2a0eedbded95.mp4
+
+backend/storage/uploads/
+backend/storage/outputs/
+
+backend/storage/

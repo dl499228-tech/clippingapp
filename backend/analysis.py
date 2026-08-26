@@ -104,13 +104,13 @@ def _extract_json(text: str) -> dict:
 
 async def analyze_transcript(segments: List[dict], content_type: str,
                              metadata: Dict) -> Dict:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    from google import genai
 
-    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise AnalysisError("EMERGENT_LLM_KEY not configured")
+        raise AnalysisError("GEMINI_API_KEY not configured")
 
-    model = os.environ.get("ANALYSIS_MODEL", "claude-sonnet-4-6")
+    model = os.environ.get("ANALYSIS_MODEL", "gemini-2.5-flash")
     min_s = int(os.environ.get("CLIP_MIN_SECONDS", "20"))
     max_s = int(os.environ.get("CLIP_MAX_SECONDS", "90"))
     duration = float(metadata.get("duration", 0) or 0)
@@ -127,18 +127,22 @@ async def analyze_transcript(segments: List[dict], content_type: str,
         "Return the JSON now."
     )
 
-    chat = LlmChat(
-        api_key=api_key,
-        session_id="clip-analysis",
-        system_message=system,
-    ).with_model("anthropic", model)
-
     try:
-        resp = await chat.send_message(UserMessage(text=user_text))
-    except Exception as e:  # noqa: BLE001
-        raise AnalysisError(f"LLM analysis request failed: {e}") from e
+        client = genai.Client(api_key=api_key)
 
-    raw = resp if isinstance(resp, str) else str(resp)
+        response = await client.aio.models.generate_content(
+            model=model,
+            contents=user_text,
+            config={
+                "system_instruction": system,
+                "response_mime_type": "application/json",
+            },
+        )
+
+        raw = response.text or ""
+    except Exception as e:  # noqa: BLE001
+        raise AnalysisError(f"Gemini analysis request failed: {e}") from e
+
     try:
         data = _extract_json(raw)
     except (json.JSONDecodeError, ValueError) as e:
@@ -155,12 +159,16 @@ async def analyze_transcript(segments: List[dict], content_type: str,
             end = float(c.get("end", 0))
         except (TypeError, ValueError):
             continue
+
         if duration:
             end = min(end, duration)
             start = min(start, max(0.0, duration - 1))
+
         if end <= start:
             continue
+
         scores = c.get("scores", {}) if isinstance(c.get("scores"), dict) else {}
+
         cleaned.append({
             "title": str(c.get("title", "Untitled clip"))[:200],
             "start": round(start, 2),
@@ -168,7 +176,10 @@ async def analyze_transcript(segments: List[dict], content_type: str,
             "hook": str(c.get("hook", ""))[:500],
             "reason": str(c.get("reason", ""))[:1000],
             "category": str(c.get("category", "highlight"))[:50],
-            "confidence": max(0.0, min(1.0, float(c.get("confidence", 0.5) or 0.5))),
+            "confidence": max(
+                0.0,
+                min(1.0, float(c.get("confidence", 0.5) or 0.5))
+            ),
             "scores": {m: scores.get(m, 0) for m in SUB_METRICS},
         })
 
